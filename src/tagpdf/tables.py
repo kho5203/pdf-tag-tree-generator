@@ -109,7 +109,32 @@ def _grid(table, ctx):
     return row_nodes, grid
 
 
-def _headers(table, rows, ctx):
+def _has_repeated_subheaders(grid):
+    """Recognize a second header tier when adjacent merged groups share labels."""
+    if len(grid) < 3:
+        return False
+    top, lower = grid[:2]
+    previous = None
+    for group in dict.fromkeys(top):
+        if group is None or group.width < 2 or not group.name:
+            previous = None
+            continue
+        end = group.col + group.width
+        children = lower[group.col:end]
+        if any(child is None or child.row != 1 or child.width != 1 for child in children):
+            previous = None
+            continue
+        labels = tuple(child.name.casefold() for child in children)
+        if len(set(labels)) < 2 or any(not any(c.isalpha() for c in label) for label in labels):
+            previous = None
+            continue
+        if previous == (group.col, labels):
+            return True
+        previous = end, labels
+    return False
+
+
+def _headers(table, rows, grid, ctx):
     count = 0
     for i, row in enumerate(rows):
         repeat = _property(row, "trPr/tblHeader", "0").lower() not in FALSE
@@ -119,8 +144,12 @@ def _headers(table, rows, ctx):
             else:
                 ctx.review(f"Inspect the header setting on row {i + 1}, outside the leading header rows.")
     if not count and _look(table, "firstRow", 0x20):
-        count = 1
-        ctx.review("Confirm that the styled first row contains column headers.")
+        if _has_repeated_subheaders(grid):
+            count = 2
+            ctx.review("Confirm that rows 1 and 2 are column headers. Word did not mark either row to repeat.")
+        else:
+            count = 1
+            ctx.review("Confirm that the styled first row contains column headers.")
     if not count:
         ctx.review("Identify column headers in Acrobat. Word did not identify a header row.")
     row_headers = _look(table, "firstColumn", 0x80)
@@ -200,7 +229,7 @@ def _render(table, ctx, caption):
         return _linear(table, ctx, caption)
     try:
         row_nodes, grid = _grid(table, ctx)
-        nhead, first_col = _headers(table, row_nodes, ctx)
+        nhead, first_col = _headers(table, row_nodes, grid, ctx)
     except ValueError:
         ctx.loss("The Word table grid was invalid or too wide to encode. Rebuild the table around the recovered cell contents.")
         return _linear(table, ctx, caption)
