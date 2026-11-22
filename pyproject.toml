@@ -7,7 +7,7 @@ name = "pdf-tag-tree-generator"
 version = "0.1.0"
 description = "Convert Word reports to tagged PDFs for offline accessibility review"
 requires-python = ">=3.12"
-dependencies = ["python-docx>=1.2,<2", "lxml>=5,<7"]
+dependencies = ["python-docx>=1.2,<2", "lxml>=5,<7", "Pillow>=12.3,<14"]
 
 [project.optional-dependencies]
 test = ["pypdf>=6,<8"]

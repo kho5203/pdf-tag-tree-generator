@@ -4,6 +4,7 @@ from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib.resources import files
+from io import BytesIO
 from pathlib import Path
 import re
 from urllib.parse import quote, urlsplit
@@ -11,6 +12,7 @@ from urllib.parse import quote, urlsplit
 from docx import Document
 from docx.oxml.ns import qn
 from lxml import etree
+from PIL import Image
 
 from .charts import render_chart
 from .numbering import Numbering, val
@@ -186,8 +188,22 @@ class Report:
                 self.loss("Embed the linked image in Word and convert again.")
                 return ""
             blob = rel.target_part.blob
-            ext = "png" if blob.startswith(b"\x89PNG\r\n\x1a\n") else "jpg" if blob.startswith(b"\xff\xd8\xff") else None
-            if not ext:
+            if blob.startswith((b"GIF87a", b"GIF89a")):
+                try:
+                    with Image.open(BytesIO(blob), formats=("GIF",)) as image:
+                        with BytesIO() as png:
+                            image.convert("RGBA").save(png, format="PNG")
+                            blob = png.getvalue()
+                        if image.is_animated:
+                            self.loss("Only the first frame of this animated GIF was preserved. Restore the remaining information from Word.")
+                except (OSError, Image.DecompressionBombError):
+                    self.loss("The embedded GIF could not be decoded. Reinsert it as PNG in Word and convert again.")
+                    return ""
+            if blob.startswith(b"\x89PNG\r\n\x1a\n"):
+                ext = "png"
+            elif blob.startswith(b"\xff\xd8\xff"):
+                ext = "jpg"
+            else:
                 self.loss("Reinsert this image as PNG or JPEG. Its original format was omitted.")
                 return ""
             asset = f"picture-{self.marker}.{ext}"
