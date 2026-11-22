@@ -299,7 +299,7 @@ class Report:
                 content = self.inline_paragraph(node)
                 if not content.strip():
                     continue
-                if item is not None:
+                if item is not None and (level >= 9 or title):
                     num, depth, label = item
                     if depth > len(lists) or depth >= 4:
                         self.review("Confirm the nesting depth of this list item in Acrobat.")
@@ -320,7 +320,11 @@ class Report:
                     command = commands[min(level,len(commands)-1)]
                     if i+1 < len(nodes) and nodes[i+1].find(".//"+WP+"extent") is not None:
                         result.append(r"\Needspace{10\baselineskip}")
-                    result.append("\\" + command + "[{" + text(words(node)) + "}]{" + content + "}" + self.anchor)
+                    # Word can use list numbering on a paragraph with an outline
+                    # level. Keep its numbering in the visible and tagged heading.
+                    prefix = text(item[2]) + " " if item is not None and item[2] else ""
+                    result.append("\\" + command + "[{" + prefix + text(words(node)) + "}]{" +
+                                  prefix + content + "}" + self.anchor)
                 elif title:
                     result.append(r"\par\tagpdfparaOff\noindent\tagstructbegin{tag=Title}\tagmcbegin{}"
                                   + r"{\LARGE\bfseries " + self.anchor + content
