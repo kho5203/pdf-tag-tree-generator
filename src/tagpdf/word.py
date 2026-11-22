@@ -15,6 +15,7 @@ from lxml import etree
 from PIL import Image
 
 from .charts import render_chart
+from .footers import read_footers
 from .numbering import Numbering, val
 from .tables import render_table
 
@@ -89,6 +90,7 @@ class Report:
         self.numbering = Numbering(self.doc)
         self.counts = Counter()
         self.findings = []
+        self.rendered_paragraphs = set()
         self.heading = ""
         self.label = "Document"
         self.marker = 0
@@ -353,6 +355,8 @@ class Report:
                 content = self.inline_paragraph(node)
                 if not content.strip():
                     continue
+                if node.find(".//"+W+"p") is None:
+                    self.rendered_paragraphs.add(" ".join(words(node).split()))
                 if item is not None and (level >= 9 or title):
                     num, depth, label = item
                     if depth > len(lists) or depth >= 4:
@@ -393,12 +397,18 @@ class Report:
     def body(self):
         result = self.render_blocks(list(self.blocks(self.doc.element.body)))
         for rel in self.doc.part.rels.values():
-            if rel.reltype.rsplit("/",1)[-1] in {"footer","header","footnotes","endnotes"} and not rel.is_external:
+            if rel.reltype.rsplit("/",1)[-1] in {"header","footnotes","endnotes"} and not rel.is_external:
                 part = etree.fromstring(rel.target_part.blob, etree.XMLParser(resolve_entities=False, no_network=True))
                 if words(part) or any(part.iter(W+"drawing")):
                     self.loss(f"Review {rel.target_part.partname} in Word and restore omitted text or graphics from this part.")
         if not result or not any(x.strip() for x in result):
             raise ValueError("The document has no renderable main-body content.")
+        footer_texts, blank_cover = read_footers(self.doc, self.rendered_paragraphs, self.loss)
+        if blank_cover:
+            result.insert(0, r"\thispagestyle{empty}")
+        if footer_texts:
+            result.append(r"\section{Footer information}")
+            result.extend(text(value) + r"\par" for value in footer_texts)
         return "\n\n".join(result)
 
     def latex(self):
