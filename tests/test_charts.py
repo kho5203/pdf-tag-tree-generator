@@ -23,14 +23,32 @@ class ChartContext:
         self.losses.append(action)
 
 
-def convert(data, kind="barChart"):
+def convert(data, kind="barChart", properties=""):
     root = fromstring(f'<chartSpace xmlns="{C[1:-1]}"><chart><plotArea>'
-                      f'<{kind}><ser>{data}</ser></{kind}></plotArea></chart></chartSpace>')
+                      f'<{kind}>{properties}<ser>{data}</ser></{kind}></plotArea></chart></chartSpace>')
     ctx = ChartContext()
     return render_chart(root, ctx, description="Source description"), ctx
 
 
 class ChartTests(unittest.TestCase):
+    def test_bar_direction_preserves_orientation_and_tagged_table_data(self):
+        data = """
+            <cat><strLit><pt idx="0"><v>Category 1</v></pt>
+                         <pt idx="1"><v>Category 2</v></pt></strLit></cat>
+            <val><numLit><pt idx="0"><v>-2</v></pt>
+                         <pt idx="1"><v>4</v></pt></numLit></val>
+        """
+        horizontal, ctx = convert(data, properties='<barDir val="bar"/>')
+        vertical, _ = convert(data, properties='<barDir val="col"/>')
+        # The negative bar starts left of zero and the positive bar starts at zero.
+        self.assertIn(r"\put(72.000,37.000){\rule{56.000pt}{10.000pt}}", horizontal)
+        self.assertIn(r"\put(128.000,19.000){\rule{112.000pt}{10.000pt}}", horizontal)
+        self.assertIn(r"\rule{18.000pt}{28.000pt}", vertical)
+        for tex in (horizontal, vertical):
+            self.assertIn("1 & Category 1 & -2", tex)
+            self.assertIn("2 & Category 2 & 4", tex)
+        self.assertEqual(ctx.losses, [])
+
     def test_sparse_index_preserves_category_relationship_and_custom_label(self):
         tex, ctx = convert("""
             <tx><v>Cases</v></tx>

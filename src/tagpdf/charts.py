@@ -78,6 +78,7 @@ class Series:
     sizes: dict
     labels: dict
     plot: str
+    horizontal: bool
 
 
 def _number(value):
@@ -86,6 +87,29 @@ def _number(value):
     except (ValueError, TypeError):
         return None
     return num if isfinite(num) else None
+
+
+def _horizontal_bars(series, points, last, ymin, ymax, fraction, ctx):
+    left, right, bottom = 72, 240, 15
+    height = min(144, 18 * (last + 1))
+    step = height / (last + 1)
+    thickness = min(10, step * 0.6)
+    baseline = left + (right - left) * fraction(0)
+    lines = [rf"\begin{{picture}}[off](250,{bottom + height + 5})",
+             rf"\put({left},{bottom}){{\line(1,0){{{right - left}}}}}",
+             rf"\put({baseline:.3f},{bottom}){{\line(0,1){{{height}}}}}",
+             rf"\put({left},5){{\makebox(0,0){{\scriptsize {ymin:.3g}}}}}",
+             rf"\put({right},5){{\makebox(0,0){{\scriptsize {ymax:.3g}}}}}"]
+    for index, value in points:
+        x = left + (right - left) * fraction(value)
+        y = bottom + height - (index + 0.5) * step
+        lines.append(rf"\put({min(x, baseline):.3f},{y - thickness / 2:.3f})"
+                     rf"{{\rule{{{abs(x - baseline):.3f}pt}}{{{thickness:.3f}pt}}}}")
+        if step >= 11 or index in (points[0][0], points[-1][0]):
+            category = series.categories.get(index, "")
+            tick = category if category and len(category) <= 14 else str(index + 1)
+            lines.append(rf"\put({left - 4},{y:.3f}){{\makebox(0,0)[r]{{\scriptsize {ctx.text(tick)}}}}}")
+    return "\n".join([*lines, r"\end{picture}"])
 
 
 def _plot(series, ymin, ymax, ctx):
@@ -97,10 +121,16 @@ def _plot(series, ymin, ymax, ctx):
     # Normalize before subtracting to avoid overflow for opposite-sign extremes.
     scale = max(abs(ymin), abs(ymax), 1)
     low, high = ymin / scale, ymax / scale
+
+    def fraction(value):
+        return (value / scale - low) / (high - low)
+
     def y(value):
-        return 14 + 42 * ((value / scale - low) / (high - low))
+        return 14 + 42 * fraction(value)
 
     last = max(series.categories.keys() | series.values.keys())
+    if series.horizontal:
+        return _horizontal_bars(series, points, last, ymin, ymax, fraction, ctx)
     step = 210 / (last + 1)
     baseline = y(0)
     lines = [r"\begin{picture}[off](250,64)",
@@ -169,7 +199,9 @@ def _series(group, node, number, ctx):
         ctx.review(f"Check blank or nonnumeric points in “{name}” against the source chart.")
     if categories and values and categories.keys() != values.keys():
         ctx.review(f"Check the blank category or value cells in “{name}” against the source chart.")
-    return Series(name, categories, values, sizes, labels, group.tag.removeprefix(C))
+    direction = group.find(f"{C}barDir")
+    horizontal = group.tag == f"{C}barChart" and direction is not None and direction.get("val") == "bar"
+    return Series(name, categories, values, sizes, labels, group.tag.removeprefix(C), horizontal)
 
 
 def _data_table(s, ctx):
