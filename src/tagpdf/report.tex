@@ -1,0 +1,43 @@
+\DocumentMetadata{lang=@@LANG@@,pdfversion=2.0,pdfstandard=ua-2,tagging=on}
+\documentclass[11pt,letterpaper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{array,longtable,graphicx,needspace,hyperref}
+\hypersetup{pdftitle={@@TITLE@@},pdfdisplaydoctitle=true,colorlinks=true,urlcolor=blue}
+\setcounter{secnumdepth}{-1}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt plus 1pt}
+\setlength{\emergencystretch}{2em}
+\renewcommand{\arraystretch}{1.2}
+\newwrite\tagpages
+\immediate\openout\tagpages=report.pages
+\newcommand\TagPage[1]{\write\tagpages{#1 \thepage}}
+% TeX Live 2026 longtable does not reset the occupied slots from a previous
+% rowspan. Without these sockets it omits unrelated cells in later tables.
+\AddToHook{env/longtable/before}{\UseTaggingSocket{tbl/init/celldata}}
+\AddToHook{env/longtable/after}{\UseTaggingSocket{tbl/restore/celldata}}
+\ExplSyntaxOn
+\NewDocumentCommand\TagSaveHeader{m}{\cs_gset:cpe{tagpdfhdr#1}{\tag_get:n{struct_id}}}
+\NewExpandableDocumentCommand\TagHeaderID{m}{\use:c{tagpdfhdr#1}}
+% A vertically merged data cell can refer to a row header that comes later.
+% Save each cell's structure number now, then resolve header IDs at table end.
+\seq_new:N \g_tagpdf_table_headers_seq
+\NewDocumentCommand\TagApplyHeaders{m}{
+  \seq_gput_right:Ne \g_tagpdf_table_headers_seq {
+    \exp_not:N \tag_struct_gput:nne {\tag_get:n{struct_num}}{attribute}
+      {/O~/Table~/Headers~[\exp_not:n{#1}]}
+  }
+}
+\NewDocumentCommand\TagFinishTable{}{
+  \seq_map_function:NN \g_tagpdf_table_headers_seq \use:n
+  \seq_gclear:N \g_tagpdf_table_headers_seq
+}
+% Leave the image editable as a Figure with absent Alt when the source lacks it.
+% The kernel's default alt plug would insert the temporary asset filename.
+\NewTaggingSocketPlug{graphic/begin}{undescribed}
+  {\tag_mc_end_push:\tag_struct_begin:n{tag=Figure}\tag_mc_begin:n{}}
+\NewTaggingSocketPlug{graphic/end}{undescribed}
+  {#1#2\tag_mc_end:\tag_struct_end:\tag_mc_begin_pop:n{}}
+\ExplSyntaxOff
+\begin{document}
+@@BODY@@
+\end{document}
