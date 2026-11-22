@@ -23,6 +23,13 @@ A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
 CHART = "{http://schemas.openxmlformats.org/drawingml/2006/chart}chart"
 DECORATIVE = "{http://schemas.microsoft.com/office/drawing/2017/decorative}decorative"
+MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+VML = "{urn:schemas-microsoft-com:vml}"
+SUPPORTED_NAMESPACES = {
+    W.strip("{}"), A.strip("{}"), WP.strip("{}"),
+    "http://schemas.openxmlformats.org/drawingml/2006/picture",
+    etree.QName(CHART).namespace, etree.QName(DECORATIVE).namespace,
+}
 LATEX = {c: "\\" + c for c in "&%$#_{}"}
 LATEX.update({"\\": r"\textbackslash{}", "^": r"\textasciicircum{}", "~": r"\textasciitilde{}",
               "<": r"\textless{}", ">": r"\textgreater{}", "\u00a0": "~"})
@@ -39,6 +46,29 @@ def local(node):
     return etree.QName(node).localname
 
 
+def select_alternate_content(parent):
+    """Resolve branches before any of the renderer's tree-wide lookups."""
+    for child in list(parent):
+        if child.tag != MC+"AlternateContent":
+            select_alternate_content(child)
+            continue
+        branch = child.find(MC+"Fallback")
+        for choice in child.findall(MC+"Choice"):
+            required = choice.get("Requires", "").split()
+            if required and all(choice.nsmap.get(prefix) in SUPPORTED_NAMESPACES for prefix in required):
+                branch = choice
+                break
+        if branch is None:
+            # Keep the marker at its source position so the importer reports the loss.
+            for option in list(child):
+                child.remove(option)
+            continue
+        select_alternate_content(branch)
+        for selected in list(branch):
+            child.addprevious(selected)
+        parent.remove(child)
+
+
 @dataclass(frozen=True)
 class Finding:
     marker: int
@@ -52,6 +82,7 @@ class Report:
 
     def __init__(self, source: Path, work: Path):
         self.doc = Document(source)
+        select_alternate_content(self.doc.element.body)
         self.work = work
         self.title = self.doc.core_properties.title or source.stem
         self.styles = {s.style_id: s for s in self.doc.styles}
@@ -130,7 +161,7 @@ class Report:
                 if not rid and mark in self.bookmarks:
                     return r"\hyperlink{" + self.bookmarks[mark] + "}{" + content + "}"
                 self.loss("Restore the hyperlink destination in Acrobat or Word. Its visible text was retained.")
-            if tag == W+"r" and content and n.find(W+"drawing") is None:
+            if tag == W+"r" and content and n.find(W+"drawing") is None and n.find(W+"pict") is None:
                 props = n.find(W+"rPr")
                 for key, macro in (("b", "textbf"), ("i", "textit")):
                     el = props.find(W+key) if props is not None else None
@@ -142,6 +173,11 @@ class Report:
             return content
         if tag == W+"drawing":
             return self.drawing(n)
+        if tag == W+"pict":
+            return self.legacy_picture(n)
+        if tag == MC+"AlternateContent":
+            self.loss("Word compatibility content has no supported choice or fallback. Restore it from Word.")
+            return ""
         if tag == W+"tab":
             return r"\quad{}"
         if tag in (W+"br", W+"cr"):
@@ -161,6 +197,22 @@ class Report:
             return ""
         self.loss(f"Restore or compare unsupported Word content ({local(n)}) with the source.")
         return text(words(n))
+
+    def legacy_picture(self, node):
+        # The VML fallback for a Word text box can carry ordinary document blocks.
+        boxes = node.findall(f"./*/{VML}textbox/{W}txbxContent")
+        if not boxes:
+            self.loss("Restore the unsupported legacy Word picture or shape from Word.")
+            return text(words(node))
+        shape = boxes[0].getparent().getparent()
+        if len(boxes) != 1 or len(node) != 1 or shape.find(".//"+VML+"imagedata") is not None:
+            self.loss("Restore any additional drawings or images in the legacy Word text box. Its text blocks were retained.")
+        previous_heading = self.heading
+        try:
+            blocks = [block for box in boxes for block in self.blocks(box)]
+            return "\n\\par\n" + "\n\n".join(self.render_blocks(blocks)) + "\n\\par\n"
+        finally:
+            self.heading = previous_heading
 
     def drawing(self, n):
         prop = n.find(".//"+WP+"docPr")
@@ -247,8 +299,7 @@ class Report:
             elif node.tag not in {W+"sectPr", W+"customXmlPr", W+"del", W+"moveFrom", W+"bookmarkStart", W+"bookmarkEnd"}:
                 yield node
 
-    def body(self):
-        nodes = list(self.blocks(self.doc.element.body))
+    def render_blocks(self, nodes):
         captions = {}
         consumed = set()
         for i, n in enumerate(nodes):
@@ -285,7 +336,10 @@ class Report:
             if node.tag != W+"p":
                 close(0)
                 with self.location("Object", local(node)):
-                    self.loss("Compare this unsupported Word object with the source and restore its content.")
+                    if node.tag == MC+"AlternateContent":
+                        self.inline(node)
+                    else:
+                        self.loss("Compare this unsupported Word object with the source and restore its content.")
                     if words(node):
                         result.append(self.anchor + text(words(node)) + r"\par")
                 continue
@@ -334,6 +388,10 @@ class Report:
                         self.review("Confirm which object this caption describes and associate it in the tag tree.")
                     result.append(self.anchor + content + r"\par")
         close(0)
+        return result
+
+    def body(self):
+        result = self.render_blocks(list(self.blocks(self.doc.element.body)))
         for rel in self.doc.part.rels.values():
             if rel.reltype.rsplit("/",1)[-1] in {"footer","header","footnotes","endnotes"} and not rel.is_external:
                 part = etree.fromstring(rel.target_part.blob, etree.XMLParser(resolve_entities=False, no_network=True))
