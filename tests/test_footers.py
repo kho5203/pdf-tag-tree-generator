@@ -86,7 +86,9 @@ class FooterTest(unittest.TestCase):
             self.assertIn("unsupported field “NUMPAGES”", review)
             pdf = PdfReader(source.with_suffix(".pdf"))
             tree = pdf.root_object["/StructTreeRoot"]
-            nodes = [tagged_text(pdf, node) for node in descendants(tree) if node.get("/S") == "/text"]
+            role_map = tree["/RoleMap"]
+            nodes = [tagged_text(pdf, node) for node in descendants(tree)
+                     if role_map.get(node.get("/S"), node.get("/S")) == "/P"]
             self.assertEqual(nodes.count("For assistance contact the service desk."), 1)
             self.assertNotIn("Inactive even-page footer.", nodes)
             self.assertNotIn("999", pdf.pages[0].extract_text())
